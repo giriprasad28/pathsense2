@@ -14,10 +14,21 @@ class _SignupScreenState extends State<SignupScreen> {
   final TextEditingController emailController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
+  String role = "User"; // 🔥 NEW
+
   bool isLoading = false;
 
   /// 🔐 SIGNUP FUNCTION
   Future<void> signUpUser() async {
+    if (passwordController.text.trim().length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Password must be at least 6 characters"),
+        ),
+      );
+      return;
+    }
+
     setState(() => isLoading = true);
 
     try {
@@ -27,11 +38,18 @@ class _SignupScreenState extends State<SignupScreen> {
       );
 
       if (response.user != null) {
+        /// ✅ STORE ROLE
+        await supabase.from('profiles').insert({
+          'id': response.user!.id,
+          'email': emailController.text.trim(),
+          'role': role, // 🔥 dynamic role
+        });
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Signup successful! Please login")),
         );
 
-        Navigator.pop(context); // go back to login
+        Navigator.pop(context);
       }
     } catch (e) {
       print("Signup Error: $e");
@@ -94,7 +112,7 @@ class _SignupScreenState extends State<SignupScreen> {
                 ),
               ),
 
-              const SizedBox(height: 50),
+              const SizedBox(height: 40),
 
               /// EMAIL
               _inputField(
@@ -112,6 +130,11 @@ class _SignupScreenState extends State<SignupScreen> {
                 isPassword: true,
                 controller: passwordController,
               ),
+
+              const SizedBox(height: 25),
+
+              /// 🔥 ROLE SELECTOR
+              _roleSelector(),
 
               const SizedBox(height: 40),
 
@@ -159,6 +182,7 @@ class _SignupScreenState extends State<SignupScreen> {
     );
   }
 
+  /// INPUT FIELD
   Widget _inputField(
       String hint,
       IconData icon, {
@@ -179,6 +203,52 @@ class _SignupScreenState extends State<SignupScreen> {
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(18),
           borderSide: BorderSide.none,
+        ),
+      ),
+    );
+  }
+
+  /// 🔥 ROLE SELECTOR UI
+  Widget _roleSelector() {
+    return Container(
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        children: [
+          _roleButton("User"),
+          _roleButton("Parent"),
+        ],
+      ),
+    );
+  }
+
+  Widget _roleButton(String text) {
+    final selected = role == text;
+
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => role = text),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            color: selected
+                ? const Color(0xFFFF6A00)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Center(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontWeight:
+                selected ? FontWeight.bold : FontWeight.normal,
+                color: selected ? Colors.white : Colors.grey,
+              ),
+            ),
+          ),
         ),
       ),
     );

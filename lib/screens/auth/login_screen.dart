@@ -13,14 +13,12 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  String role = "User";
-
   final supabase = Supabase.instance.client;
 
   final TextEditingController emailController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
-  /// 🔐 LOGIN FUNCTION
+  /// 🔐 LOGIN FUNCTION (UPDATED)
   Future<void> loginUser() async {
     try {
       final response = await supabase.auth.signInWithPassword(
@@ -29,17 +27,26 @@ class _LoginScreenState extends State<LoginScreen> {
       );
 
       if (response.user != null) {
+        final userId = response.user!.id;
+
+        /// 🔥 FETCH ROLE FROM DATABASE
+        final data = await supabase
+            .from('profiles')
+            .select()
+            .eq('id', userId)
+            .single();
+
+        String roleFromDb = data['role'];
+
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Login Successful")),
+          SnackBar(content: Text("Login as $roleFromDb")),
         );
 
-        /// Role-based navigation
-        if (role == "User") {
+        /// 🔀 NAVIGATION BASED ON ROLE
+        if (roleFromDb == "User") {
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(
-              builder: (_) => const BottomNav(),
-            ),
+            MaterialPageRoute(builder: (_) => const BottomNav()),
           );
         } else {
           Navigator.pushReplacement(
@@ -128,11 +135,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 controller: passwordController,
               ),
 
-              const SizedBox(height: 30),
-
-              /// ROLE SELECTOR
-              _roleSelector(),
-
               const SizedBox(height: 40),
 
               /// LOGIN BUTTON
@@ -203,52 +205,6 @@ class _LoginScreenState extends State<LoginScreen> {
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(18),
           borderSide: BorderSide.none,
-        ),
-      ),
-    );
-  }
-
-  /// ROLE SELECTOR
-  Widget _roleSelector() {
-    return Container(
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        children: [
-          _roleButton("User"),
-          _roleButton("Parent"),
-        ],
-      ),
-    );
-  }
-
-  Widget _roleButton(String text) {
-    final selected = role == text;
-
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => role = text),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          decoration: BoxDecoration(
-            color: selected
-                ? const Color(0xFFFF6A00)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: Center(
-            child: Text(
-              text,
-              style: TextStyle(
-                fontWeight:
-                selected ? FontWeight.bold : FontWeight.normal,
-                color: selected ? Colors.white : Colors.grey,
-              ),
-            ),
-          ),
         ),
       ),
     );
