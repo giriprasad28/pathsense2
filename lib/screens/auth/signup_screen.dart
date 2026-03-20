@@ -1,62 +1,47 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../../navigation/bottom_nav.dart';
-import '../parent/parent_dashborad_screen.dart';
-import 'signup_screen.dart';
-
-class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+class SignupScreen extends StatefulWidget {
+  const SignupScreen({super.key});
 
   @override
-  State<LoginScreen> createState() => _LoginScreenState();
+  State<SignupScreen> createState() => _SignupScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
-  String role = "User";
-
+class _SignupScreenState extends State<SignupScreen> {
   final supabase = Supabase.instance.client;
 
   final TextEditingController emailController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
-  /// 🔐 LOGIN FUNCTION
-  Future<void> loginUser() async {
+  bool isLoading = false;
+
+  /// 🔐 SIGNUP FUNCTION
+  Future<void> signUpUser() async {
+    setState(() => isLoading = true);
+
     try {
-      final response = await supabase.auth.signInWithPassword(
+      final response = await supabase.auth.signUp(
         email: emailController.text.trim(),
         password: passwordController.text.trim(),
       );
 
       if (response.user != null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Login Successful")),
+          const SnackBar(content: Text("Signup successful! Please login")),
         );
 
-        /// Role-based navigation
-        if (role == "User") {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (_) => const BottomNav(),
-            ),
-          );
-        } else {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (_) => const ParentDashboradScreen(),
-            ),
-          );
-        }
+        Navigator.pop(context); // go back to login
       }
     } catch (e) {
-      print("Login Error: $e");
+      print("Signup Error: $e");
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.toString())),
       );
     }
+
+    setState(() => isLoading = false);
   }
 
   @override
@@ -81,7 +66,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     borderRadius: BorderRadius.circular(24),
                   ),
                   child: const Icon(
-                    Icons.shield_rounded,
+                    Icons.person_add,
                     size: 40,
                     color: Colors.orange,
                   ),
@@ -92,9 +77,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const Center(
                 child: Text(
-                  "Path Sense",
+                  "Create Account",
                   style: TextStyle(
-                    fontSize: 30,
+                    fontSize: 28,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -104,7 +89,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const Center(
                 child: Text(
-                  "Stay Safe. Stay Connected.",
+                  "Join Path Sense",
                   style: TextStyle(color: Colors.grey),
                 ),
               ),
@@ -128,14 +113,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 controller: passwordController,
               ),
 
-              const SizedBox(height: 30),
-
-              /// ROLE SELECTOR
-              _roleSelector(),
-
               const SizedBox(height: 40),
 
-              /// LOGIN BUTTON
+              /// SIGNUP BUTTON
               SizedBox(
                 height: 55,
                 child: ElevatedButton(
@@ -145,9 +125,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       borderRadius: BorderRadius.circular(20),
                     ),
                   ),
-                  onPressed: loginUser,
-                  child: const Text(
-                    "LOGIN",
+                  onPressed: isLoading ? null : signUpUser,
+                  child: isLoading
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : const Text(
+                    "SIGN UP",
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -156,21 +138,16 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
 
-              const SizedBox(height: 15),
+              const SizedBox(height: 20),
 
-              /// SIGNUP NAVIGATION BUTTON
+              /// BACK TO LOGIN
               Center(
                 child: TextButton(
                   onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const SignupScreen(),
-                      ),
-                    );
+                    Navigator.pop(context);
                   },
                   child: const Text(
-                    "Don't have an account? Sign Up",
+                    "Already have an account? Login",
                     style: TextStyle(color: Colors.orange),
                   ),
                 ),
@@ -182,7 +159,6 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  /// INPUT FIELD
   Widget _inputField(
       String hint,
       IconData icon, {
@@ -203,52 +179,6 @@ class _LoginScreenState extends State<LoginScreen> {
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(18),
           borderSide: BorderSide.none,
-        ),
-      ),
-    );
-  }
-
-  /// ROLE SELECTOR
-  Widget _roleSelector() {
-    return Container(
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        children: [
-          _roleButton("User"),
-          _roleButton("Parent"),
-        ],
-      ),
-    );
-  }
-
-  Widget _roleButton(String text) {
-    final selected = role == text;
-
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => role = text),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          decoration: BoxDecoration(
-            color: selected
-                ? const Color(0xFFFF6A00)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: Center(
-            child: Text(
-              text,
-              style: TextStyle(
-                fontWeight:
-                selected ? FontWeight.bold : FontWeight.normal,
-                color: selected ? Colors.white : Colors.grey,
-              ),
-            ),
-          ),
         ),
       ),
     );

@@ -1,4 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:http/http.dart' as http;
+import 'dart:async';
+import 'dart:convert';
 import 'emergency_contacts_screen.dart';
 
 class UserHomeScreen extends StatefulWidget {
@@ -13,9 +18,140 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
   String selectedMode = "Walk";
 
   final fromController =
-  TextEditingController(text: "University Campus");
+  TextEditingController(text: "Chennai");
   final toController =
-  TextEditingController(text: "Home (Downtown)");
+  TextEditingController(text: "Vellore");
+
+  StreamSubscription<Position>? _positionStream;
+  Position? _currentPosition;
+
+  GoogleMapController? _mapController;
+  Set<Marker> _markers = {};
+
+  String? estimatedTime;
+
+  // ================== MODE MAPPING ==================
+
+  String _getTravelMode() {
+    switch (selectedMode) {
+      case "Walk":
+        return "walking";
+      case "Bike":
+        return "bicycling";
+      case "Car":
+        return "driving";
+      default:
+        return "walking";
+    }
+  }
+
+  // ================== LOCATION PERMISSION ==================
+
+  Future<bool> _handlePermission() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return false;
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) return false;
+    }
+
+    if (permission == LocationPermission.deniedForever) return false;
+
+    return true;
+  }
+
+  // ================== CALCULATE ETA ==================
+
+  Future<void> _calculateDuration() async {
+    final origin = fromController.text;
+    final destination = toController.text;
+
+    setState(() {
+      estimatedTime = "Calculating...";
+    });
+
+    final url =
+        "https://maps.googleapis.com/maps/api/directions/json?"
+        "origin=$origin"
+        "&destination=$destination"
+        "&mode=${_getTravelMode()}"
+        "&key=AIzaSyDT79Gza-BJ4r0YwBLd7iiTtvZ7GOQUvVc";
+
+    final response = await http.get(Uri.parse(url));
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      print("Directions API response:");
+      print(data);
+
+      if (data["routes"].isNotEmpty) {
+        final duration =
+        data["routes"][0]["legs"][0]["duration"]["text"];
+
+        setState(() {
+          estimatedTime = duration;
+        });
+      } else {
+        setState(() {
+          estimatedTime = "Route not found";
+        });
+      }
+    } else {
+      setState(() {
+        estimatedTime = "Error fetching route";
+      });
+    }
+  }
+
+  // ================== START TRACKING ==================
+
+  Future<void> _startTracking() async {
+    final hasPermission = await _handlePermission();
+    if (!hasPermission) return;
+
+    _positionStream = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10,
+      ),
+    ).listen((Position position) {
+      setState(() {
+        _currentPosition = position;
+
+        _markers.clear();
+        _markers.add(
+          Marker(
+            markerId: const MarkerId("currentLocation"),
+            position:
+            LatLng(position.latitude, position.longitude),
+          ),
+        );
+      });
+
+      _mapController?.animateCamera(
+        CameraUpdate.newLatLng(
+          LatLng(position.latitude, position.longitude),
+        ),
+      );
+    });
+  }
+
+  void _stopTracking() {
+    _positionStream?.cancel();
+  }
+
+  @override
+  void dispose() {
+    _positionStream?.cancel();
+    fromController.dispose();
+    toController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,36 +162,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
           padding: const EdgeInsets.all(20),
           child: ListView(
             children: [
-
-              /// HEADER
-              Row(
-                children: [
-                  const CircleAvatar(
-                    radius: 22,
-                    backgroundImage: AssetImage("assets/avatar.png"),
-                  ),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text("GOOD EVENING",
-                            style: TextStyle(
-                                color: Colors.grey, fontSize: 12)),
-                        Text("Alex Rivera",
-                            style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold)),
-                      ],
-                    ),
-                  ),
-                  CircleAvatar(
-                    backgroundColor: const Color(0xFF1A1A1A),
-                    child: const Icon(Icons.notifications_none),
-                  )
-                ],
-              ),
-
               const SizedBox(height: 30),
 
               /// STATUS CARD
@@ -64,43 +170,26 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
                 decoration: BoxDecoration(
                   color: const Color(0xFFFF6A00),
                   borderRadius: BorderRadius.circular(28),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.orange.withOpacity(0.4),
-                      blurRadius: 25,
-                      offset: const Offset(0, 12),
-                    )
-                  ],
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-
                     const Text("CURRENT STATUS",
                         style: TextStyle(
                             fontSize: 12,
                             letterSpacing: 1,
                             color: Colors.white70)),
-
                     const SizedBox(height: 8),
-
                     Text(
-                      tripStarted ? "Walking" : "Ready to Go",
+                      tripStarted ? selectedMode : "Ready to Go",
                       style: const TextStyle(
                           fontSize: 32,
                           fontWeight: FontWeight.bold),
                     ),
-
                     const SizedBox(height: 20),
-
-                    /// FROM
                     _locationInput("FROM", fromController),
-
                     const SizedBox(height: 12),
-
-                    /// TO
                     _locationInput("TO", toController),
-
                     const SizedBox(height: 24),
 
                     if (!tripStarted)
@@ -111,9 +200,12 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
                     const SizedBox(height: 10),
 
                     if (!tripStarted)
-                      const Text(
-                        "Estimated duration: 12 mins",
-                        style: TextStyle(color: Colors.white70),
+                      Text(
+                        estimatedTime != null
+                            ? "Estimated duration: $estimatedTime"
+                            : "Enter locations",
+                        style:
+                        const TextStyle(color: Colors.white70),
                       ),
                   ],
                 ),
@@ -126,11 +218,11 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
                   style: TextStyle(
                       color: Colors.grey,
                       letterSpacing: 1)),
-
               const SizedBox(height: 16),
 
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                mainAxisAlignment:
+                MainAxisAlignment.spaceBetween,
                 children: [
                   _modeButton("Walk", Icons.directions_walk),
                   _modeButton("Bike", Icons.directions_bike),
@@ -140,94 +232,40 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 
               const SizedBox(height: 30),
 
-              /// LIVE TRACKING
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: const [
-                  Text("LIVE TRACKING",
-                      style: TextStyle(
-                          color: Colors.grey,
-                          letterSpacing: 1)),
-                  Text("• LIVE",
-                      style: TextStyle(
-                          color: Colors.orange,
-                          fontSize: 12)),
-                ],
-              ),
-
+              /// LIVE MAP
+              const Text("LIVE TRACKING",
+                  style: TextStyle(
+                      color: Colors.grey,
+                      letterSpacing: 1)),
               const SizedBox(height: 12),
 
               Container(
                 height: 180,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1A1A1A),
                   borderRadius: BorderRadius.circular(24),
                 ),
-                child: const Center(
-                    child: Icon(Icons.navigation,
-                        size: 40,
-                        color: Colors.orange)),
-              ),
-
-              const SizedBox(height: 30),
-
-              /// EMERGENCY CONTACTS
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1A1A1A),
+                child: ClipRRect(
                   borderRadius: BorderRadius.circular(24),
-                ),
-                child: Column(
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment:
-                      MainAxisAlignment.spaceBetween,
-                      children: const [
-                        Text("EMERGENCY CONTACTS",
-                            style: TextStyle(
-                                fontWeight: FontWeight.bold)),
-                        Text("2 Active",
-                            style:
-                            TextStyle(color: Colors.grey)),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      "Sarah and Marcus are being notified of your trip status.",
-                      style:
-                      TextStyle(color: Colors.grey),
-                    ),
-                    const SizedBox(height: 16),
-                    OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(
-                            color: Colors.orange),
-                        padding: const EdgeInsets.symmetric(
-                            vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius:
-                          BorderRadius.circular(18),
-                        ),
+                  child: _currentPosition == null
+                      ? const Center(
+                      child: CircularProgressIndicator())
+                      : GoogleMap(
+                    initialCameraPosition:
+                    CameraPosition(
+                      target: LatLng(
+                        _currentPosition!.latitude,
+                        _currentPosition!.longitude,
                       ),
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) =>
-                            const EmergencyContactsScreen(),
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.add,
-                          color: Colors.orange),
-                      label: const Text("Add Contact",
-                          style: TextStyle(
-                              color: Colors.orange)),
+                      zoom: 16,
                     ),
-                  ],
+                    markers: _markers,
+                    myLocationEnabled: true,
+                    myLocationButtonEnabled: false,
+                    zoomControlsEnabled: false,
+                    onMapCreated: (controller) {
+                      _mapController = controller;
+                    },
+                  ),
                 ),
               ),
             ],
@@ -250,7 +288,8 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
         const SizedBox(height: 6),
         TextField(
           controller: controller,
-          style: const TextStyle(color: Colors.white),
+          style:
+          const TextStyle(color: Colors.white),
           decoration: InputDecoration(
             filled: true,
             fillColor:
@@ -279,7 +318,10 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
             BorderRadius.circular(20),
           ),
         ),
-        onPressed: () {
+        onPressed: () async {
+          await _calculateDuration();
+          await _startTracking();
+
           setState(() {
             tripStarted = true;
           });
@@ -290,7 +332,8 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
           "START TRIP",
           style: TextStyle(
               color: Colors.orange,
-              fontWeight: FontWeight.bold),
+              fontWeight:
+              FontWeight.bold),
         ),
       ),
     );
@@ -301,8 +344,13 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
       mainAxisAlignment:
       MainAxisAlignment.spaceBetween,
       children: [
-        const Text("Arriving in 12 mins",
-            style: TextStyle(color: Colors.white)),
+        Text(
+          estimatedTime != null
+              ? "Arriving in $estimatedTime"
+              : "Arriving...",
+          style:
+          const TextStyle(color: Colors.white),
+        ),
         ElevatedButton(
           style: ElevatedButton.styleFrom(
             backgroundColor:
@@ -313,6 +361,7 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
             ),
           ),
           onPressed: () {
+            _stopTracking();
             setState(() {
               tripStarted = false;
             });
@@ -328,10 +377,14 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     final isSelected = selectedMode == text;
 
     return GestureDetector(
-      onTap: () {
+      onTap: () async {
         setState(() {
           selectedMode = text;
         });
+
+        if (!tripStarted) {
+          await _calculateDuration();
+        }
       },
       child: Container(
         width: 100,
