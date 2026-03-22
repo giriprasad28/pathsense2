@@ -3,6 +3,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'theme/app_theme.dart';
 import 'screens/auth/login_screen.dart';
+import 'navigation/bottom_nav.dart';
+import 'screens/parent/parent_dashborad_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,7 +25,81 @@ class SafeWalkApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
-      home: const LoginScreen(),
+      home: const AuthChecker(), // 🔥 IMPORTANT
+    );
+  }
+}
+
+/// 🔐 CHECK LOGIN + ROLE
+class AuthChecker extends StatefulWidget {
+  const AuthChecker({super.key});
+
+  @override
+  State<AuthChecker> createState() => _AuthCheckerState();
+}
+
+class _AuthCheckerState extends State<AuthChecker> {
+  final supabase = Supabase.instance.client;
+
+  @override
+  void initState() {
+    super.initState();
+    checkUser();
+  }
+
+  Future<void> checkUser() async {
+    final session = supabase.auth.currentSession;
+
+    if (session == null) {
+      /// ❌ Not logged in
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+    } else {
+      /// ✅ Logged in → get role
+      final userId = session.user.id;
+
+      try {
+        final data = await supabase
+            .from('profiles')
+            .select()
+            .eq('id', userId)
+            .single();
+
+        String role = data['role'];
+
+        if (role == "User") {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const BottomNav()),
+          );
+        } else {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+                builder: (_) => const ParentDashboradScreen()),
+          );
+        }
+      } catch (e) {
+        print("Error fetching role: $e");
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const LoginScreen()),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    /// 🔄 Loading screen while checking
+    return const Scaffold(
+      backgroundColor: Color(0xFF0D0D0D),
+      body: Center(
+        child: CircularProgressIndicator(),
+      ),
     );
   }
 }

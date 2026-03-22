@@ -4,7 +4,10 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'dart:async';
 import 'dart:convert';
-import 'emergency_contacts_screen.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:geocoding/geocoding.dart';
+
+import '../auth/login_screen.dart';
 
 class UserHomeScreen extends StatefulWidget {
   const UserHomeScreen({super.key});
@@ -14,47 +17,97 @@ class UserHomeScreen extends StatefulWidget {
 }
 
 class _UserHomeScreenState extends State<UserHomeScreen> {
-  bool tripStarted = false;
-  String selectedMode = "Walk";
+  final supabase = Supabase.instance.client;
 
-  final fromController =
-  TextEditingController(text: "Chennai");
-  final toController =
-  TextEditingController(text: "Vellore");
+  String selectedMode = "Car";
+
+  final fromController = TextEditingController(text: "Chennai");
+  final toController = TextEditingController(text: "Vellore");
 
   StreamSubscription<Position>? _positionStream;
   Position? _currentPosition;
 
   GoogleMapController? _mapController;
+
   Set<Marker> _markers = {};
+  Set<Polyline> _polylines = {};
 
   String? estimatedTime;
+  double _bearing = 0;
 
-  // ================== MODE MAPPING ==================
+  final String orsKey = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImVjZjgxMzllNzc3MjRlNDQ4M2Y5Yjg5NmE4MWRiOGRjIiwiaCI6Im11cm11cjY0In0=";
 
-  String _getTravelMode() {
-    switch (selectedMode) {
-      case "Walk":
-        return "walking";
-      case "Bike":
-        return "bicycling";
-      case "Car":
-        return "driving";
-      default:
-        return "walking";
+  @override
+  void initState() {
+    super.initState();
+    _initLocation();
+  }
+
+  // ================= LOGOUT =================
+  Future<void> _logout() async {
+    await supabase.auth.signOut();
+
+    if (!mounted) return;
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+    );
+  }
+
+  Future<void> _initLocation() async {
+    final ok = await _handlePermission();
+    if (!ok) return;
+
+    final pos = await Geolocator.getCurrentPosition();
+
+    setState(() {
+      _currentPosition = pos;
+      _markers = {
+        Marker(
+          markerId: const MarkerId("me"),
+          position: LatLng(pos.latitude, pos.longitude),
+        ),
+      };
+    });
+  }
+
+  Future<void> _setCurrentLocationToFrom() async {
+    final ok = await _handlePermission();
+    if (!ok) return;
+
+    final pos = await Geolocator.getCurrentPosition();
+
+    final placemarks =
+    await placemarkFromCoordinates(pos.latitude, pos.longitude);
+
+    if (placemarks.isNotEmpty) {
+      final p = placemarks.first;
+
+      setState(() {
+        fromController.text =
+        "${p.subLocality ?? ""}, ${p.locality ?? ""}";
+      });
     }
   }
 
-  // ================== LOCATION PERMISSION ==================
+  String _getORSProfile() {
+    switch (selectedMode) {
+      case "Walk":
+        return "foot-walking";
+      case "Bike":
+        return "driving-car";
+      case "Car":
+        return "driving-car";
+      default:
+        return "driving-car";
+    }
+  }
 
   Future<bool> _handlePermission() async {
-    bool serviceEnabled;
-    LocationPermission permission;
+    if (!await Geolocator.isLocationServiceEnabled()) return false;
 
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) return false;
-
-    permission = await Geolocator.checkPermission();
+    var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) return false;
@@ -65,351 +118,285 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     return true;
   }
 
-  // ================== CALCULATE ETA ==================
+  Future<void> _sendLocation(Position p) async {
+    final user = supabase.auth.currentUser;
+    if (user == null) return;
 
-  Future<void> _calculateDuration() async {
-    final origin = fromController.text;
-    final destination = toController.text;
-
-    setState(() {
-      estimatedTime = "Calculating...";
+    await supabase.from('live_location').upsert({
+      'user_id': user.id,
+      'latitude': p.latitude,
+      'longitude': p.longitude,
+      'updated_at': DateTime.now().toIso8601String(),
     });
-
-    final url =
-        "https://maps.googleapis.com/maps/api/directions/json?"
-        "origin=$origin"
-        "&destination=$destination"
-        "&mode=${_getTravelMode()}"
-        "&key=AIzaSyDT79Gza-BJ4r0YwBLd7iiTtvZ7GOQUvVc";
-
-    final response = await http.get(Uri.parse(url));
-
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      print("Directions API response:");
-      print(data);
-
-      if (data["routes"].isNotEmpty) {
-        final duration =
-        data["routes"][0]["legs"][0]["duration"]["text"];
-
-        setState(() {
-          estimatedTime = duration;
-        });
-      } else {
-        setState(() {
-          estimatedTime = "Route not found";
-        });
-      }
-    } else {
-      setState(() {
-        estimatedTime = "Error fetching route";
-      });
-    }
   }
 
-  // ================== START TRACKING ==================
+  Future<Map<String, double>?> _getCoordinates(String place) async {
+    final query = "$place, Chennai, Tamil Nadu, India";
 
-  Future<void> _startTracking() async {
-    final hasPermission = await _handlePermission();
-    if (!hasPermission) return;
+    final url =
+        "https://api.openrouteservice.org/geocode/search?api_key=$orsKey&text=$query";
 
-    _positionStream = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 10,
-      ),
-    ).listen((Position position) {
+    final res = await http.get(Uri.parse(url));
+    final data = json.decode(res.body);
+
+    if (data["features"] != null && data["features"].isNotEmpty) {
+      final c = data["features"][0]["geometry"]["coordinates"];
+      return {"lng": c[0], "lat": c[1]};
+    }
+    return null;
+  }
+
+  List<LatLng> _decodePolyline(String encoded) {
+    List<LatLng> poly = [];
+    int index = 0, len = encoded.length;
+    int lat = 0, lng = 0;
+
+    while (index < len) {
+      int b, shift = 0, result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      lat += ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+
+      shift = 0;
+      result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      lng += ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+
+      poly.add(LatLng(lat / 1E5, lng / 1E5));
+    }
+
+    return poly;
+  }
+
+  LatLngBounds _boundsFromLatLngList(List<LatLng> list) {
+    double x0 = list.first.latitude;
+    double x1 = list.first.latitude;
+    double y0 = list.first.longitude;
+    double y1 = list.first.longitude;
+
+    for (var latLng in list) {
+      if (latLng.latitude > x1) x1 = latLng.latitude;
+      if (latLng.latitude < x0) x0 = latLng.latitude;
+      if (latLng.longitude > y1) y1 = latLng.longitude;
+      if (latLng.longitude < y0) y0 = latLng.longitude;
+    }
+
+    return LatLngBounds(
+      northeast: LatLng(x1, y1),
+      southwest: LatLng(x0, y0),
+    );
+  }
+
+  Future<void> _calculateRoute() async {
+    try {
+      setState(() => estimatedTime = "Calculating...");
+
+      final start = await _getCoordinates(fromController.text);
+      final end = await _getCoordinates(toController.text);
+
+      if (start == null || end == null) {
+        setState(() => estimatedTime = "Invalid location");
+        return;
+      }
+
+      final res = await http.post(
+        Uri.parse(
+            "https://api.openrouteservice.org/v2/directions/${_getORSProfile()}"),
+        headers: {
+          "Authorization": orsKey,
+          "Content-Type": "application/json"
+        },
+        body: jsonEncode({
+          "coordinates": [
+            [start["lng"], start["lat"]],
+            [end["lng"], end["lat"]]
+          ]
+        }),
+      );
+
+      final data = json.decode(res.body);
+
+      if (data["routes"] == null || data["routes"].isEmpty) {
+        setState(() => estimatedTime = "Route not found");
+        return;
+      }
+
+      final route = data["routes"][0];
+
+      final duration = route["summary"]["duration"];
+      final totalMinutes = (duration / 60).round();
+
+      final hours = totalMinutes ~/ 60;
+      final mins = totalMinutes % 60;
+
+      final polyPoints = _decodePolyline(route["geometry"]);
+
       setState(() {
-        _currentPosition = position;
+        estimatedTime =
+        hours > 0 ? "${hours}h ${mins}m" : "${mins} mins";
 
-        _markers.clear();
-        _markers.add(
-          Marker(
-            markerId: const MarkerId("currentLocation"),
-            position:
-            LatLng(position.latitude, position.longitude),
-          ),
-        );
+        _polylines = {
+          Polyline(
+            polylineId: const PolylineId("route"),
+            points: polyPoints,
+            color: Colors.orange,
+            width: 5,
+          )
+        };
       });
 
       _mapController?.animateCamera(
-        CameraUpdate.newLatLng(
-          LatLng(position.latitude, position.longitude),
+        CameraUpdate.newLatLngBounds(
+            _boundsFromLatLngList(polyPoints), 50),
+      );
+    } catch (e) {
+      setState(() => estimatedTime = "Error");
+    }
+  }
+
+  Future<void> _startTracking() async {
+    final ok = await _handlePermission();
+    if (!ok) return;
+
+    _positionStream = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 2,
+      ),
+    ).listen((pos) async {
+      setState(() {
+        _currentPosition = pos;
+        _bearing = pos.heading;
+
+        _markers = {
+          Marker(
+            markerId: const MarkerId("me"),
+            position: LatLng(pos.latitude, pos.longitude),
+            rotation: _bearing,
+          ),
+        };
+      });
+
+      _mapController?.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: LatLng(pos.latitude, pos.longitude),
+            zoom: 18,
+            tilt: 60,
+            bearing: _bearing,
+          ),
         ),
       );
+
+      await _sendLocation(pos);
     });
-  }
-
-  void _stopTracking() {
-    _positionStream?.cancel();
-  }
-
-  @override
-  void dispose() {
-    _positionStream?.cancel();
-    fromController.dispose();
-    toController.dispose();
-    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0D0D0D),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: ListView(
-            children: [
-              const SizedBox(height: 30),
-
-              /// STATUS CARD
-              Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFF6A00),
-                  borderRadius: BorderRadius.circular(28),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text("CURRENT STATUS",
-                        style: TextStyle(
-                            fontSize: 12,
-                            letterSpacing: 1,
-                            color: Colors.white70)),
-                    const SizedBox(height: 8),
-                    Text(
-                      tripStarted ? selectedMode : "Ready to Go",
-                      style: const TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 20),
-                    _locationInput("FROM", fromController),
-                    const SizedBox(height: 12),
-                    _locationInput("TO", toController),
-                    const SizedBox(height: 24),
-
-                    if (!tripStarted)
-                      _startTripButton()
-                    else
-                      _endTripRow(),
-
-                    const SizedBox(height: 10),
-
-                    if (!tripStarted)
-                      Text(
-                        estimatedTime != null
-                            ? "Estimated duration: $estimatedTime"
-                            : "Enter locations",
-                        style:
-                        const TextStyle(color: Colors.white70),
-                      ),
-                  ],
-                ),
+      body: Padding(
+        padding: const EdgeInsets.all(20),
+        child: ListView(
+          children: [
+            Align(
+              alignment: Alignment.topRight,
+              child: IconButton(
+                onPressed: _logout,
+                icon: const Icon(Icons.logout, color: Colors.orange),
               ),
+            ),
 
-              const SizedBox(height: 30),
+            _input(fromController),
 
-              /// TRAVEL MODE
-              const Text("TRAVEL MODE",
-                  style: TextStyle(
-                      color: Colors.grey,
-                      letterSpacing: 1)),
-              const SizedBox(height: 16),
-
-              Row(
-                mainAxisAlignment:
-                MainAxisAlignment.spaceBetween,
-                children: [
-                  _modeButton("Walk", Icons.directions_walk),
-                  _modeButton("Bike", Icons.directions_bike),
-                  _modeButton("Car", Icons.directions_car),
-                ],
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: _setCurrentLocationToFrom,
+                icon: const Icon(Icons.my_location, color: Colors.orange),
+                label: const Text("Use Current Location",
+                    style: TextStyle(color: Colors.orange)),
               ),
+            ),
 
-              const SizedBox(height: 30),
+            const SizedBox(height: 10),
+            _input(toController),
 
-              /// LIVE MAP
-              const Text("LIVE TRACKING",
-                  style: TextStyle(
-                      color: Colors.grey,
-                      letterSpacing: 1)),
-              const SizedBox(height: 12),
+            const SizedBox(height: 20),
 
-              Container(
-                height: 180,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
-                  child: _currentPosition == null
-                      ? const Center(
-                      child: CircularProgressIndicator())
-                      : GoogleMap(
-                    initialCameraPosition:
-                    CameraPosition(
-                      target: LatLng(
-                        _currentPosition!.latitude,
-                        _currentPosition!.longitude,
-                      ),
-                      zoom: 16,
-                    ),
-                    markers: _markers,
-                    myLocationEnabled: true,
-                    myLocationButtonEnabled: false,
-                    zoomControlsEnabled: false,
-                    onMapCreated: (controller) {
-                      _mapController = controller;
-                    },
+            ElevatedButton(
+              onPressed: () async {
+                await _calculateRoute();
+                await _startTracking();
+              },
+              child: const Text("START TRIP"),
+            ),
+
+            const SizedBox(height: 10),
+            Text(estimatedTime ?? "",
+                style: const TextStyle(color: Colors.white)),
+
+            const SizedBox(height: 20),
+
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _mode("Walk"),
+                _mode("Bike"),
+                _mode("Car"),
+              ],
+            ),
+
+            const SizedBox(height: 20),
+
+            SizedBox(
+              height: 200,
+              child: _currentPosition == null
+                  ? const Center(child: CircularProgressIndicator())
+                  : GoogleMap(
+                initialCameraPosition: CameraPosition(
+                  target: LatLng(
+                    _currentPosition!.latitude,
+                    _currentPosition!.longitude,
                   ),
+                  zoom: 14,
                 ),
+                markers: _markers,
+                polylines: _polylines,
+                myLocationEnabled: false,
+                onMapCreated: (c) => _mapController = c,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _locationInput(
-      String label, TextEditingController controller) {
-    return Column(
-      crossAxisAlignment:
-      CrossAxisAlignment.start,
-      children: [
-        Text(label,
-            style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 12)),
-        const SizedBox(height: 6),
-        TextField(
-          controller: controller,
-          style:
-          const TextStyle(color: Colors.white),
-          decoration: InputDecoration(
-            filled: true,
-            fillColor:
-            Colors.white.withOpacity(0.15),
-            border: OutlineInputBorder(
-              borderRadius:
-              BorderRadius.circular(16),
-              borderSide: BorderSide.none,
-            ),
-          ),
-        ),
-      ],
-    );
+  Widget _input(TextEditingController c) {
+    return TextField(controller: c);
   }
 
-  Widget _startTripButton() {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton.icon(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.white,
-          padding:
-          const EdgeInsets.symmetric(vertical: 16),
-          shape: RoundedRectangleBorder(
-            borderRadius:
-            BorderRadius.circular(20),
-          ),
-        ),
-        onPressed: () async {
-          await _calculateDuration();
-          await _startTracking();
-
-          setState(() {
-            tripStarted = true;
-          });
-        },
-        icon: const Icon(Icons.play_arrow,
-            color: Colors.orange),
-        label: const Text(
-          "START TRIP",
-          style: TextStyle(
-              color: Colors.orange,
-              fontWeight:
-              FontWeight.bold),
-        ),
-      ),
-    );
-  }
-
-  Widget _endTripRow() {
-    return Row(
-      mainAxisAlignment:
-      MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          estimatedTime != null
-              ? "Arriving in $estimatedTime"
-              : "Arriving...",
-          style:
-          const TextStyle(color: Colors.white),
-        ),
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor:
-            Colors.white.withOpacity(0.3),
-            shape: RoundedRectangleBorder(
-              borderRadius:
-              BorderRadius.circular(18),
-            ),
-          ),
-          onPressed: () {
-            _stopTracking();
-            setState(() {
-              tripStarted = false;
-            });
-          },
-          child: const Text("END TRIP"),
-        )
-      ],
-    );
-  }
-
-  Widget _modeButton(
-      String text, IconData icon) {
-    final isSelected = selectedMode == text;
+  Widget _mode(String text) {
+    final selected = selectedMode == text;
 
     return GestureDetector(
       onTap: () async {
-        setState(() {
-          selectedMode = text;
-        });
-
-        if (!tripStarted) {
-          await _calculateDuration();
-        }
+        setState(() => selectedMode = text);
+        await _calculateRoute();
       },
-      child: Container(
-        width: 100,
-        padding:
-        const EdgeInsets.symmetric(vertical: 18),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? const Color(0xFFFF6A00)
-              : const Color(0xFF1A1A1A),
-          borderRadius:
-          BorderRadius.circular(20),
-        ),
-        child: Column(
-          children: [
-            Icon(icon,
-                color: isSelected
-                    ? Colors.white
-                    : Colors.grey),
-            const SizedBox(height: 8),
-            Text(text,
-                style: TextStyle(
-                    color: isSelected
-                        ? Colors.white
-                        : Colors.grey)),
-          ],
+      child: Text(
+        text,
+        style: TextStyle(
+          color: selected ? Colors.orange : Colors.white,
         ),
       ),
     );
