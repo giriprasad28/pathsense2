@@ -17,6 +17,10 @@ class UserHomeScreen extends StatefulWidget {
 }
 
 class _UserHomeScreenState extends State<UserHomeScreen> {
+
+  /// =====================
+  /// STATE VARIABLES
+  /// =====================
   final supabase = Supabase.instance.client;
 
   String selectedMode = "Car";
@@ -35,6 +39,8 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
   String? estimatedTime;
   double _bearing = 0;
 
+  bool isTripStarted = false;
+
   final String orsKey = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImVjZjgxMzllNzc3MjRlNDQ4M2Y5Yjg5NmE4MWRiOGRjIiwiaCI6Im11cm11cjY0In0=";
 
   @override
@@ -43,10 +49,11 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     _initLocation();
   }
 
-  // ================= LOGOUT =================
+  /// =====================
+  /// AUTHENTICATION (LOGOUT)
+  /// =====================
   Future<void> _logout() async {
     await supabase.auth.signOut();
-
     if (!mounted) return;
 
     Navigator.pushReplacement(
@@ -55,6 +62,9 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     );
   }
 
+  /// =====================
+  /// LOCATION INITIALIZATION
+  /// =====================
   Future<void> _initLocation() async {
     final ok = await _handlePermission();
     if (!ok) return;
@@ -72,18 +82,19 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     });
   }
 
+  /// =====================
+  /// SET CURRENT LOCATION TO "FROM"
+  /// =====================
   Future<void> _setCurrentLocationToFrom() async {
     final ok = await _handlePermission();
     if (!ok) return;
 
     final pos = await Geolocator.getCurrentPosition();
-
     final placemarks =
     await placemarkFromCoordinates(pos.latitude, pos.longitude);
 
     if (placemarks.isNotEmpty) {
       final p = placemarks.first;
-
       setState(() {
         fromController.text =
         "${p.subLocality ?? ""}, ${p.locality ?? ""}";
@@ -91,19 +102,9 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     }
   }
 
-  String _getORSProfile() {
-    switch (selectedMode) {
-      case "Walk":
-        return "foot-walking";
-      case "Bike":
-        return "driving-car";
-      case "Car":
-        return "driving-car";
-      default:
-        return "driving-car";
-    }
-  }
-
+  /// =====================
+  /// LOCATION PERMISSION HANDLER
+  /// =====================
   Future<bool> _handlePermission() async {
     if (!await Geolocator.isLocationServiceEnabled()) return false;
 
@@ -118,6 +119,9 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     return true;
   }
 
+  /// =====================
+  /// SEND LOCATION TO SUPABASE
+  /// =====================
   Future<void> _sendLocation(Position p) async {
     final user = supabase.auth.currentUser;
     if (user == null) return;
@@ -130,22 +134,50 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     });
   }
 
-  Future<Map<String, double>?> _getCoordinates(String place) async {
-    final query = "$place, Chennai, Tamil Nadu, India";
-
-    final url =
-        "https://api.openrouteservice.org/geocode/search?api_key=$orsKey&text=$query";
-
-    final res = await http.get(Uri.parse(url));
-    final data = json.decode(res.body);
-
-    if (data["features"] != null && data["features"].isNotEmpty) {
-      final c = data["features"][0]["geometry"]["coordinates"];
-      return {"lng": c[0], "lat": c[1]};
+  /// =====================
+  /// TRAVEL MODE PROFILE
+  /// =====================
+  String _getORSProfile() {
+    switch (selectedMode) {
+      case "Walk":
+        return "foot-walking";
+      case "Bike":
+      case "Car":
+        return "driving-car";
+      default:
+        return "driving-car";
     }
+  }
+
+  /// =====================
+  /// GET COORDINATES FROM PLACE
+  /// =====================
+  Future<Map<String, double>?> _getCoordinates(String place) async {
+    try {
+      /// =====================
+      /// USE FLUTTER GEOCODING (MORE RELIABLE)
+      /// =====================
+      List<Location> locations =
+      await locationFromAddress("$place,Tamil Nadu, India");
+
+
+
+      if (locations.isNotEmpty) {
+        return {
+          "lat": locations.first.latitude,
+          "lng": locations.first.longitude,
+        };
+      }
+    } catch (e) {
+      print("Geocoding error: $e");
+    }
+
     return null;
   }
 
+  /// =====================
+  /// DECODE POLYLINE
+  /// =====================
   List<LatLng> _decodePolyline(String encoded) {
     List<LatLng> poly = [];
     int index = 0, len = encoded.length;
@@ -175,6 +207,9 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     return poly;
   }
 
+  /// =====================
+  /// MAP BOUNDS
+  /// =====================
   LatLngBounds _boundsFromLatLngList(List<LatLng> list) {
     double x0 = list.first.latitude;
     double x1 = list.first.latitude;
@@ -194,6 +229,9 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     );
   }
 
+  /// =====================
+  /// ETA & ROUTE CALCULATION (ORS + SMART TRAFFIC)
+  /// =====================
   Future<void> _calculateRoute() async {
     try {
       setState(() => estimatedTime = "Calculating...");
@@ -201,11 +239,26 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
       final start = await _getCoordinates(fromController.text);
       final end = await _getCoordinates(toController.text);
 
+      /// =====================
+      /// CHECK LOCATION VALID
+      /// =====================
       if (start == null || end == null) {
         setState(() => estimatedTime = "Invalid location");
         return;
       }
 
+      if (start["lat"] == null || start["lng"] == null ||
+          end["lat"] == null || end["lng"] == null) {
+        setState(() => estimatedTime = "Invalid coordinates");
+        return;
+      }
+
+      print("START: $start");
+      print("END: $end");
+
+      /// =====================
+      /// ORS ROUTE (POLYLINE)
+      /// =====================
       final res = await http.post(
         Uri.parse(
             "https://api.openrouteservice.org/v2/directions/${_getORSProfile()}"),
@@ -223,24 +276,51 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 
       final data = json.decode(res.body);
 
+      print("ORS RESPONSE: $data");
+
+      /// =====================
+      /// HANDLE ORS ERROR
+      /// =====================
       if (data["routes"] == null || data["routes"].isEmpty) {
+        print("ORS ERROR: ${data["error"]}");
         setState(() => estimatedTime = "Route not found");
         return;
       }
 
       final route = data["routes"][0];
-
-      final duration = route["summary"]["duration"];
-      final totalMinutes = (duration / 60).round();
-
-      final hours = totalMinutes ~/ 60;
-      final mins = totalMinutes % 60;
-
       final polyPoints = _decodePolyline(route["geometry"]);
 
+      /// =====================
+      /// ETA CALCULATION + SMART TRAFFIC
+      /// =====================
+      final duration = route["summary"]["duration"];
+      double mins = (duration / 60);
+
+      final hour = DateTime.now().hour;
+
+      if (hour >= 8 && hour <= 10) {
+        mins *= 1.3; // morning traffic
+      } else if (hour >= 17 && hour <= 20) {
+        mins *= 1.5; // evening traffic
+      } else if (hour >= 22 || hour <= 5) {
+        mins *= 0.9; // night low traffic
+      }
+
+      int totalMinutes = mins.round();
+
+      int hours = totalMinutes ~/ 60;
+      int minutes = totalMinutes % 60;
+
+      String etaText;
+
+      if (hours > 0) {
+        etaText = "$hours hr $minutes min";
+      } else {
+        etaText = "$minutes min";
+      }
+
       setState(() {
-        estimatedTime =
-        hours > 0 ? "${hours}h ${mins}m" : "${mins} mins";
+        estimatedTime = etaText;
 
         _polylines = {
           Polyline(
@@ -251,71 +331,115 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
           )
         };
       });
-
+      /// =====================
+      /// CAMERA FIT TO ROUTE
+      /// =====================
       _mapController?.animateCamera(
         CameraUpdate.newLatLngBounds(
-            _boundsFromLatLngList(polyPoints), 50),
+          _boundsFromLatLngList(polyPoints),
+          50,
+        ),
       );
+
     } catch (e) {
+      print("ERROR: $e");
       setState(() => estimatedTime = "Error");
     }
   }
 
+  /// =====================
+  /// LIVE TRACKING SYSTEM (MAP FOLLOW + ROTATION)
+  /// =====================
   Future<void> _startTracking() async {
     final ok = await _handlePermission();
     if (!ok) return;
 
     _positionStream = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 2,
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5, // update every 5 meters
       ),
     ).listen((pos) async {
+
+      /// =====================
+      /// CALCULATE DIRECTION (BEARING)
+      /// =====================
+      if (_currentPosition != null) {
+        _bearing = Geolocator.bearingBetween(
+          _currentPosition!.latitude,
+          _currentPosition!.longitude,
+          pos.latitude,
+          pos.longitude,
+        );
+      }
+
       setState(() {
         _currentPosition = pos;
-        _bearing = pos.heading;
 
         _markers = {
           Marker(
             markerId: const MarkerId("me"),
             position: LatLng(pos.latitude, pos.longitude),
             rotation: _bearing,
+            anchor: const Offset(0.5, 0.5),
           ),
         };
       });
 
+      /// =====================
+      /// MOVE CAMERA (LIKE GOOGLE MAPS)
+      /// =====================
       _mapController?.animateCamera(
         CameraUpdate.newCameraPosition(
           CameraPosition(
             target: LatLng(pos.latitude, pos.longitude),
-            zoom: 18,
-            tilt: 60,
+            zoom: 17,
+            tilt: 45,
             bearing: _bearing,
           ),
         ),
       );
 
+      /// =====================
+      /// SEND LOCATION TO BACKEND
+      /// =====================
       await _sendLocation(pos);
     });
   }
 
+  /// =====================
+  /// USER INTERFACE (UI)
+  /// =====================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0D0D0D),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
+      backgroundColor: const Color(0xFF0B0B0B),
+      body: SafeArea(
         child: ListView(
+          padding: const EdgeInsets.all(16),
           children: [
-            Align(
-              alignment: Alignment.topRight,
-              child: IconButton(
-                onPressed: _logout,
-                icon: const Icon(Icons.logout, color: Colors.orange),
-              ),
+
+            /// HEADER
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text("Good Evening",
+                    style: TextStyle(color: Colors.grey)),
+                IconButton(
+                  onPressed: _logout,
+                  icon: const Icon(Icons.logout, color: Colors.orange),
+                )
+              ],
             ),
 
-            _input(fromController),
+            const SizedBox(height: 20),
+
+            /// FROM INPUT
+            TextField(
+              controller: fromController,
+              style: const TextStyle(color: Colors.white),
+              decoration: _inputStyle("Enter Starting Location"),
+            ),
 
             Align(
               alignment: Alignment.centerRight,
@@ -328,36 +452,99 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
             ),
 
             const SizedBox(height: 10),
-            _input(toController),
 
-            const SizedBox(height: 20),
-
-            ElevatedButton(
-              onPressed: () async {
-                await _calculateRoute();
-                await _startTracking();
-              },
-              child: const Text("START TRIP"),
+            /// TO INPUT
+            TextField(
+              controller: toController,
+              style: const TextStyle(color: Colors.white),
+              decoration: _inputStyle("Enter Destination"),
             ),
 
-            const SizedBox(height: 10),
-            Text(estimatedTime ?? "",
-                style: const TextStyle(color: Colors.white)),
-
             const SizedBox(height: 20),
+
+            /// STATUS CARD
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFFF7A00), Color(0xFFFF5E00)],
+                ),
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("CURRENT STATUS",
+                      style: TextStyle(color: Colors.white70)),
+
+                  const SizedBox(height: 10),
+
+                  Text(selectedMode,
+                      style: const TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white)),
+
+                  const SizedBox(height: 20),
+
+                  Text("FROM: ${fromController.text}",
+                      style: const TextStyle(color: Colors.white)),
+
+                  Text("TO: ${toController.text}",
+                      style: const TextStyle(color: Colors.white)),
+
+                  const SizedBox(height: 20),
+
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text("Arriving in ${estimatedTime ?? '--'}",
+                          style: const TextStyle(color: Colors.white)),
+
+                      if (!isTripStarted)
+                        ElevatedButton(
+                          onPressed: () async {
+                            await _calculateRoute();
+                            await _startTracking();
+                            setState(() => isTripStarted = true);
+                          },
+                          child: const Text("START"),
+                        )
+                      else
+                        ElevatedButton(
+                          onPressed: () {
+                            _positionStream?.cancel();
+                            setState(() => isTripStarted = false);
+                          },
+                          child: const Text("END"),
+                        )
+                    ],
+                  )
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 25),
+
+            /// TRAVEL MODE
+            const Text("TRAVEL MODE",
+                style: TextStyle(color: Colors.grey)),
+
+            const SizedBox(height: 10),
 
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _mode("Walk"),
-                _mode("Bike"),
-                _mode("Car"),
+                _modeButton("Walk", Icons.directions_walk),
+                _modeButton("Bike", Icons.directions_bike),
+                _modeButton("Car", Icons.directions_car),
               ],
             ),
 
             const SizedBox(height: 20),
 
-            SizedBox(
+            /// MAP VIEW
+            Container(
               height: 200,
               child: _currentPosition == null
                   ? const Center(child: CircularProgressIndicator())
@@ -371,7 +558,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
                 ),
                 markers: _markers,
                 polylines: _polylines,
-                myLocationEnabled: false,
                 onMapCreated: (c) => _mapController = c,
               ),
             ),
@@ -381,11 +567,25 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     );
   }
 
-  Widget _input(TextEditingController c) {
-    return TextField(controller: c);
+  /// =====================
+  /// INPUT FIELD DESIGN
+  /// =====================
+  InputDecoration _inputStyle(String hint) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: const TextStyle(color: Colors.grey),
+      filled: true,
+      fillColor: const Color(0xFF1A1A1A),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(15),
+      ),
+    );
   }
 
-  Widget _mode(String text) {
+  /// =====================
+  /// TRAVEL MODE BUTTON UI
+  /// =====================
+  Widget _modeButton(String text, IconData icon) {
     final selected = selectedMode == text;
 
     return GestureDetector(
@@ -393,10 +593,19 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
         setState(() => selectedMode = text);
         await _calculateRoute();
       },
-      child: Text(
-        text,
-        style: TextStyle(
-          color: selected ? Colors.orange : Colors.white,
+      child: Container(
+        width: 100,
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          color: selected ? Colors.orange : const Color(0xFF1A1A1A),
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: Colors.white),
+            const SizedBox(height: 5),
+            Text(text, style: const TextStyle(color: Colors.white))
+          ],
         ),
       ),
     );

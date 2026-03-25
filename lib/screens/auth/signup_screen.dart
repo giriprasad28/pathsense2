@@ -11,10 +11,11 @@ class SignupScreen extends StatefulWidget {
 class _SignupScreenState extends State<SignupScreen> {
   final supabase = Supabase.instance.client;
 
+  final TextEditingController nameController = TextEditingController(); // 🔥 NEW
   final TextEditingController emailController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
-  String role = "User"; // 🔥 NEW
+  String role = "User";
 
   bool isLoading = false;
 
@@ -38,11 +39,12 @@ class _SignupScreenState extends State<SignupScreen> {
       );
 
       if (response.user != null) {
-        /// ✅ STORE ROLE
+        /// ✅ STORE NAME + ROLE
         await supabase.from('profiles').insert({
           'id': response.user!.id,
+          'name': nameController.text.trim(), // 🔥 ADDED
           'email': emailController.text.trim(),
-          'role': role, // 🔥 dynamic role
+          'role': role,
         });
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -114,6 +116,15 @@ class _SignupScreenState extends State<SignupScreen> {
 
               const SizedBox(height: 40),
 
+              /// 🔥 NAME FIELD (NEW)
+              _inputField(
+                "Full Name",
+                Icons.person_outline,
+                controller: nameController,
+              ),
+
+              const SizedBox(height: 18),
+
               /// EMAIL
               _inputField(
                 "Email Address",
@@ -133,7 +144,7 @@ class _SignupScreenState extends State<SignupScreen> {
 
               const SizedBox(height: 25),
 
-              /// 🔥 ROLE SELECTOR
+              /// ROLE SELECTOR
               _roleSelector(),
 
               const SizedBox(height: 40),
@@ -208,7 +219,7 @@ class _SignupScreenState extends State<SignupScreen> {
     );
   }
 
-  /// 🔥 ROLE SELECTOR UI
+  /// ROLE SELECTOR UI
   Widget _roleSelector() {
     return Container(
       padding: const EdgeInsets.all(6),

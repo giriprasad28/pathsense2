@@ -11,7 +11,8 @@ Future<void> main() async {
 
   await Supabase.initialize(
     url: 'https://sfjluqipsfxocaehnzqt.supabase.co',
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmamx1cWlwc2Z4b2NhZWhuenF0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5ODI2NzYsImV4cCI6MjA4OTU1ODY3Nn0.gDoeVfeIb8uDYPNLSUu0Rz6sOL7tlaMPs3MeYo8hE-o',
+    anonKey:
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmamx1cWlwc2Z4b2NhZWhuenF0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5ODI2NzYsImV4cCI6MjA4OTU1ODY3Nn0.gDoeVfeIb8uDYPNLSUu0Rz6sOL7tlaMPs3MeYo8hE-o',
   );
 
   runApp(const SafeWalkApp());
@@ -25,7 +26,7 @@ class SafeWalkApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
-      home: const AuthChecker(), // 🔥 IMPORTANT
+      home: const AuthChecker(),
     );
   }
 }
@@ -44,11 +45,17 @@ class _AuthCheckerState extends State<AuthChecker> {
   @override
   void initState() {
     super.initState();
-    checkUser();
+
+    /// ✅ FIX: Delay navigation after build
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      checkUser();
+    });
   }
 
   Future<void> checkUser() async {
     final session = supabase.auth.currentSession;
+
+    if (!mounted) return;
 
     if (session == null) {
       /// ❌ Not logged in
@@ -67,6 +74,8 @@ class _AuthCheckerState extends State<AuthChecker> {
             .eq('id', userId)
             .single();
 
+        if (!mounted) return;
+
         String role = data['role'];
 
         if (role == "User") {
@@ -78,11 +87,14 @@ class _AuthCheckerState extends State<AuthChecker> {
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(
-                builder: (_) => const ParentDashboradScreen()),
+              builder: (_) => const ParentDashboradScreen(),
+            ),
           );
         }
       } catch (e) {
         print("Error fetching role: $e");
+
+        if (!mounted) return;
 
         Navigator.pushReplacement(
           context,
