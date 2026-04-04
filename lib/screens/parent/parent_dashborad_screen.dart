@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:math';
+import 'package:geocoding/geocoding.dart';
+
 
 import '../auth/login_screen.dart';
 
@@ -16,6 +18,7 @@ class ParentDashboradScreen extends StatefulWidget {
 class _ParentDashboradScreenState
     extends State<ParentDashboradScreen> {
   GoogleMapController? _mapController;
+
 
   final supabase = Supabase.instance.client;
 
@@ -117,9 +120,11 @@ class _ParentDashboradScreenState
         .from('alerts')
         .stream(primaryKey: ['id'])
         .eq('parent_id', currentParentId!)
+        .order('created_at', ascending: false)
+        .limit(1)
         .listen((data) {
       if (data.isNotEmpty) {
-        final alert = data.last;
+        final alert = data.first;
 
         if (!alertShown) {
           alertShown = true;
@@ -130,16 +135,32 @@ class _ParentDashboradScreenState
   }
 
   /// ================= ALERT POPUP =================
-  void showAlertPopup(Map alert) {
+  void showAlertPopup(Map alert) async {
     final lat = alert['latitude'];
     final lng = alert['longitude'];
+
+    String locationName = "Fetching location...";
+
+    try {
+      List<Placemark> placemarks =
+      await placemarkFromCoordinates(lat, lng);
+
+      if (placemarks.isNotEmpty) {
+        final p = placemarks.first;
+
+        locationName =
+        "${p.street ?? ""}, ${p.locality ?? ""}, ${p.administrativeArea ?? ""}";
+      }
+    } catch (e) {
+      locationName = "Location not found";
+    }
 
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text("🚨 EMERGENCY ALERT"),
         content: Text(
-          "${alert['message']}\n\nLocation:\n$lat , $lng",
+          "${alert['message']}\n\n📍 $locationName",
         ),
         actions: [
           TextButton(

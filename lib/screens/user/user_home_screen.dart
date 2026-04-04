@@ -366,6 +366,7 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     final user = supabase.auth.currentUser;
     if (user == null) return;
 
+
     final links = await supabase
         .from('user_parent_link')
         .select()
@@ -379,6 +380,28 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
         'longitude': _currentPosition?.longitude,
       });
     }
+  }
+  Future<void> sendSOSAlert() async {
+    final user = supabase.auth.currentUser;
+    if (user == null || _currentPosition == null) return;
+
+    final links = await supabase
+        .from('user_parent_link')
+        .select()
+        .eq('user_id', user.id);
+
+    for (var parent in links) {
+      await supabase.from('alerts').insert({
+        'parent_id': parent['parent_id'],
+        'message': '🚨 SOS EMERGENCY!',
+        'latitude': _currentPosition!.latitude,
+        'longitude': _currentPosition!.longitude,
+      });
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("SOS Alert Sent 🚨")),
+    );
   }
 
   @override
@@ -526,11 +549,34 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
                 onMapCreated: (c) => _mapController = c,
               ),
             ),
+             SizedBox(height: 20),
+
+            /// 🚨 SOS BUTTON
+            SizedBox(
+              height: 60,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                ),
+                onPressed: sendSOSAlert,
+                child: Text(
+                  "🚨 SOS",
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
+
 
   InputDecoration _inputStyle(String hint) {
     return InputDecoration(
