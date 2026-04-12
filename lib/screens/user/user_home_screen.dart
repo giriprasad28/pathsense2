@@ -18,9 +18,6 @@ class UserHomeScreen extends StatefulWidget {
 
 class _UserHomeScreenState extends State<UserHomeScreen> {
 
-  /// =====================
-  /// STATE VARIABLES
-  /// =====================
   final supabase = Supabase.instance.client;
 
   String selectedMode = "Car";
@@ -43,15 +40,17 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 
   final String orsKey = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImVjZjgxMzllNzc3MjRlNDQ4M2Y5Yjg5NmE4MWRiOGRjIiwiaCI6Im11cm11cjY0In0=";
 
+  /// ================= NEW SMART STOP DETECTION =================
+  LatLng? lastPosition;
+  DateTime? lastMoveTime;
+  bool isPromptShown = false;
+
   @override
   void initState() {
     super.initState();
     _initLocation();
   }
 
-  /// =====================
-  /// AUTHENTICATION (LOGOUT)
-  /// =====================
   Future<void> _logout() async {
     await supabase.auth.signOut();
     if (!mounted) return;
@@ -62,9 +61,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     );
   }
 
-  /// =====================
-  /// LOCATION INITIALIZATION
-  /// =====================
   Future<void> _initLocation() async {
     final ok = await _handlePermission();
     if (!ok) return;
@@ -82,29 +78,21 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     });
   }
 
-  /// =====================
-  /// SET CURRENT LOCATION TO "FROM"
-  /// =====================
   Future<void> _setCurrentLocationToFrom() async {
     final ok = await _handlePermission();
     if (!ok) return;
 
     final pos = await Geolocator.getCurrentPosition();
-    final placemarks =
-    await placemarkFromCoordinates(pos.latitude, pos.longitude);
+    final placemarks = await placemarkFromCoordinates(pos.latitude, pos.longitude);
 
     if (placemarks.isNotEmpty) {
       final p = placemarks.first;
       setState(() {
-        fromController.text =
-        "${p.subLocality ?? ""}, ${p.locality ?? ""}";
+        fromController.text = "${p.subLocality ?? ""}, ${p.locality ?? ""}";
       });
     }
   }
 
-  /// =====================
-  /// LOCATION PERMISSION HANDLER
-  /// =====================
   Future<bool> _handlePermission() async {
     if (!await Geolocator.isLocationServiceEnabled()) return false;
 
@@ -119,9 +107,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     return true;
   }
 
-  /// =====================
-  /// SEND LOCATION TO SUPABASE
-  /// =====================
   Future<void> _sendLocation(Position p) async {
     final user = supabase.auth.currentUser;
     if (user == null) return;
@@ -134,9 +119,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     });
   }
 
-  /// =====================
-  /// TRAVEL MODE PROFILE
-  /// =====================
   String _getORSProfile() {
     switch (selectedMode) {
       case "Walk":
@@ -149,18 +131,9 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     }
   }
 
-  /// =====================
-  /// GET COORDINATES FROM PLACE
-  /// =====================
   Future<Map<String, double>?> _getCoordinates(String place) async {
     try {
-      /// =====================
-      /// USE FLUTTER GEOCODING (MORE RELIABLE)
-      /// =====================
-      List<Location> locations =
-      await locationFromAddress("$place,Tamil Nadu, India");
-
-
+      List<Location> locations = await locationFromAddress("$place,Tamil Nadu, India");
 
       if (locations.isNotEmpty) {
         return {
@@ -175,9 +148,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     return null;
   }
 
-  /// =====================
-  /// DECODE POLYLINE
-  /// =====================
   List<LatLng> _decodePolyline(String encoded) {
     List<LatLng> poly = [];
     int index = 0, len = encoded.length;
@@ -207,9 +177,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     return poly;
   }
 
-  /// =====================
-  /// MAP BOUNDS
-  /// =====================
   LatLngBounds _boundsFromLatLngList(List<LatLng> list) {
     double x0 = list.first.latitude;
     double x1 = list.first.latitude;
@@ -229,9 +196,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     );
   }
 
-  /// =====================
-  /// ETA & ROUTE CALCULATION (ORS + SMART TRAFFIC)
-  /// =====================
   Future<void> _calculateRoute() async {
     try {
       setState(() => estimatedTime = "Calculating...");
@@ -239,29 +203,13 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
       final start = await _getCoordinates(fromController.text);
       final end = await _getCoordinates(toController.text);
 
-      /// =====================
-      /// CHECK LOCATION VALID
-      /// =====================
       if (start == null || end == null) {
         setState(() => estimatedTime = "Invalid location");
         return;
       }
 
-      if (start["lat"] == null || start["lng"] == null ||
-          end["lat"] == null || end["lng"] == null) {
-        setState(() => estimatedTime = "Invalid coordinates");
-        return;
-      }
-
-      print("START: $start");
-      print("END: $end");
-
-      /// =====================
-      /// ORS ROUTE (POLYLINE)
-      /// =====================
       final res = await http.post(
-        Uri.parse(
-            "https://api.openrouteservice.org/v2/directions/${_getORSProfile()}"),
+        Uri.parse("https://api.openrouteservice.org/v2/directions/${_getORSProfile()}"),
         headers: {
           "Authorization": orsKey,
           "Content-Type": "application/json"
@@ -276,13 +224,7 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 
       final data = json.decode(res.body);
 
-      print("ORS RESPONSE: $data");
-
-      /// =====================
-      /// HANDLE ORS ERROR
-      /// =====================
       if (data["routes"] == null || data["routes"].isEmpty) {
-        print("ORS ERROR: ${data["error"]}");
         setState(() => estimatedTime = "Route not found");
         return;
       }
@@ -290,38 +232,13 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
       final route = data["routes"][0];
       final polyPoints = _decodePolyline(route["geometry"]);
 
-      /// =====================
-      /// ETA CALCULATION + SMART TRAFFIC
-      /// =====================
       final duration = route["summary"]["duration"];
       double mins = (duration / 60);
 
-      final hour = DateTime.now().hour;
-
-      if (hour >= 8 && hour <= 10) {
-        mins *= 1.3; // morning traffic
-      } else if (hour >= 17 && hour <= 20) {
-        mins *= 1.5; // evening traffic
-      } else if (hour >= 22 || hour <= 5) {
-        mins *= 0.9; // night low traffic
-      }
-
       int totalMinutes = mins.round();
 
-      int hours = totalMinutes ~/ 60;
-      int minutes = totalMinutes % 60;
-
-      String etaText;
-
-      if (hours > 0) {
-        etaText = "$hours hr $minutes min";
-      } else {
-        etaText = "$minutes min";
-      }
-
       setState(() {
-        estimatedTime = etaText;
-
+        estimatedTime = "$totalMinutes min";
         _polylines = {
           Polyline(
             polylineId: const PolylineId("route"),
@@ -331,25 +248,19 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
           )
         };
       });
-      /// =====================
-      /// CAMERA FIT TO ROUTE
-      /// =====================
+
       _mapController?.animateCamera(
         CameraUpdate.newLatLngBounds(
           _boundsFromLatLngList(polyPoints),
           50,
         ),
       );
-
     } catch (e) {
-      print("ERROR: $e");
       setState(() => estimatedTime = "Error");
     }
   }
 
-  /// =====================
-  /// LIVE TRACKING SYSTEM (MAP FOLLOW + ROTATION)
-  /// =====================
+  /// ================= SMART TRACKING =================
   Future<void> _startTracking() async {
     final ok = await _handlePermission();
     if (!ok) return;
@@ -357,22 +268,42 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     _positionStream = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 5, // update every 5 meters
+        distanceFilter: 5,
       ),
     ).listen((pos) async {
 
-      /// =====================
-      /// CALCULATE DIRECTION (BEARING)
-      /// =====================
-      if (_currentPosition != null) {
-        _bearing = Geolocator.bearingBetween(
-          _currentPosition!.latitude,
-          _currentPosition!.longitude,
-          pos.latitude,
-          pos.longitude,
+      final currentLatLng = LatLng(pos.latitude, pos.longitude);
+
+      /// 🔥 STOP DETECTION LOGIC
+      if (lastPosition != null) {
+        final distance = Geolocator.distanceBetween(
+          lastPosition!.latitude,
+          lastPosition!.longitude,
+          currentLatLng.latitude,
+          currentLatLng.longitude,
         );
+
+        if (distance < 10) {
+          final now = DateTime.now();
+
+          if (lastMoveTime != null &&
+              now.difference(lastMoveTime!).inMinutes >= 1 &&
+              !isPromptShown) {
+
+            isPromptShown = true;
+            showUserStatusPrompt();
+          }
+        } else {
+          lastMoveTime = DateTime.now();
+          isPromptShown = false;
+        }
+      } else {
+        lastMoveTime = DateTime.now();
       }
 
+      lastPosition = currentLatLng;
+
+      /// NORMAL TRACKING
       setState(() {
         _currentPosition = pos;
 
@@ -380,36 +311,147 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
           Marker(
             markerId: const MarkerId("me"),
             position: LatLng(pos.latitude, pos.longitude),
-            rotation: _bearing,
-            anchor: const Offset(0.5, 0.5),
           ),
         };
       });
 
-      /// =====================
-      /// MOVE CAMERA (LIKE GOOGLE MAPS)
-      /// =====================
       _mapController?.animateCamera(
         CameraUpdate.newCameraPosition(
           CameraPosition(
             target: LatLng(pos.latitude, pos.longitude),
             zoom: 17,
-            tilt: 45,
-            bearing: _bearing,
           ),
         ),
       );
 
-      /// =====================
-      /// SEND LOCATION TO BACKEND
-      /// =====================
       await _sendLocation(pos);
     });
   }
 
-  /// =====================
-  /// USER INTERFACE (UI)
-  /// =====================
+  /// ================= USER PROMPT =================
+  void showUserStatusPrompt() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text("What are you doing?"),
+        content: const Text("You've been in the same place for a while."),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              sendUserStatus("Waiting");
+            },
+            child: const Text("Waiting"),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              sendUserStatus("Shopping");
+            },
+            child: const Text("Shopping"),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              sendUserStatus("Food Break");
+            },
+            child: const Text("Food"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> sendUserStatus(String status) async {
+    final user = supabase.auth.currentUser;
+    if (user == null) return;
+
+
+    final links = await supabase
+        .from('user_parent_link')
+        .select()
+        .eq('user_id', user.id);
+
+    for (var parent in links) {
+      await supabase.from('alerts').insert({
+        'parent_id': parent['parent_id'],
+        'message': 'User is $status',
+        'latitude': _currentPosition?.latitude,
+        'longitude': _currentPosition?.longitude,
+      });
+      /// 🔥 GET PARENT TOKEN
+      final parentData = await supabase
+          .from('profiles')
+          .select('fcm_token')
+          .eq('id', parent['parent_id'])
+          .single();
+
+      final parentToken = parentData['fcm_token'];
+
+      /// 🔥 SEND PUSH NOTIFICATION
+      await http.post(
+        Uri.parse("https://fcm.googleapis.com/fcm/send"),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "key=YOUR_SERVER_KEY"
+        },
+        body: jsonEncode({
+          "to": parentToken,
+          "notification": {
+            "title": "🚨 Alert",
+            "body": "User is $status"
+          }
+        }),
+      );
+    }
+  }
+  Future<void> sendSOSAlert() async {
+    final user = supabase.auth.currentUser;
+    if (user == null || _currentPosition == null) return;
+
+    final links = await supabase
+        .from('user_parent_link')
+        .select()
+        .eq('user_id', user.id);
+
+    for (var parent in links) {
+      await supabase.from('alerts').insert({
+        'parent_id': parent['parent_id'],
+        'message': '🚨 SOS EMERGENCY!',
+        'latitude': _currentPosition!.latitude,
+        'longitude': _currentPosition!.longitude,
+
+      });
+      final parentData = await supabase
+          .from('profiles')
+          .select('fcm_token')
+          .eq('id', parent['parent_id'])
+          .single();
+
+      final parentToken = parentData['fcm_token'];
+
+      await http.post(
+        Uri.parse("https://fcm.googleapis.com/fcm/send"),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "AIzaSyDHjEFvyTtg1ZcxWeY12vxJwQ17tMdkFTg"
+        },
+        body: jsonEncode({
+          "to": parentToken,
+          "notification": {
+            "title": "🚨 SOS ALERT",
+            "body": "User triggered emergency!"
+          }
+        }),
+      );
+
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("SOS Alert Sent 🚨")),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -419,7 +461,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
           padding: const EdgeInsets.all(16),
           children: [
 
-            /// HEADER
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -434,7 +475,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 
             const SizedBox(height: 20),
 
-            /// FROM INPUT
             TextField(
               controller: fromController,
               style: const TextStyle(color: Colors.white),
@@ -453,7 +493,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 
             const SizedBox(height: 10),
 
-            /// TO INPUT
             TextField(
               controller: toController,
               style: const TextStyle(color: Colors.white),
@@ -462,7 +501,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 
             const SizedBox(height: 20),
 
-            /// STATUS CARD
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -526,7 +564,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 
             const SizedBox(height: 25),
 
-            /// TRAVEL MODE
             const Text("TRAVEL MODE",
                 style: TextStyle(color: Colors.grey)),
 
@@ -543,7 +580,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 
             const SizedBox(height: 20),
 
-            /// MAP VIEW
             Container(
               height: 200,
               child: _currentPosition == null
@@ -561,15 +597,35 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
                 onMapCreated: (c) => _mapController = c,
               ),
             ),
+             SizedBox(height: 20),
+
+            /// 🚨 SOS BUTTON
+            SizedBox(
+              height: 60,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                ),
+                onPressed: sendSOSAlert,
+                child: Text(
+                  "🚨 SOS",
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  /// =====================
-  /// INPUT FIELD DESIGN
-  /// =====================
+
   InputDecoration _inputStyle(String hint) {
     return InputDecoration(
       hintText: hint,
@@ -582,9 +638,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     );
   }
 
-  /// =====================
-  /// TRAVEL MODE BUTTON UI
-  /// =====================
   Widget _modeButton(String text, IconData icon) {
     final selected = selectedMode == text;
 

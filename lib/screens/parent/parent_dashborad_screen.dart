@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:math';
+import 'package:geocoding/geocoding.dart';
+
 
 import '../auth/login_screen.dart';
 
@@ -17,10 +19,10 @@ class _ParentDashboradScreenState
     extends State<ParentDashboradScreen> {
   GoogleMapController? _mapController;
 
+
   final supabase = Supabase.instance.client;
 
-  LatLng childLocation =
-  const LatLng(13.0827, 80.2707);
+  LatLng childLocation = const LatLng(13.0827, 80.2707);
 
   Set<Marker> _markers = {};
 
@@ -29,13 +31,15 @@ class _ParentDashboradScreenState
   String? currentParentId;
   bool alertShown = false;
 
+  List requests = [];
+
   @override
   void initState() {
     super.initState();
     initParent();
   }
 
-  // ================= INIT =================
+  /// ================= INIT =================
   Future<void> initParent() async {
     final user = supabase.auth.currentUser;
     if (user == null) return;
@@ -44,9 +48,43 @@ class _ParentDashboradScreenState
 
     listenToLocation();
     listenToAlerts();
+    listenToRequests();
   }
 
-  // ================= LOGOUT =================
+  /// ================= REALTIME REQUEST LISTENER =================
+  void listenToRequests() {
+    supabase
+        .from('link_requests')
+        .stream(primaryKey: ['id'])
+        .eq('parent_id', currentParentId!)
+        .listen((data) {
+      final filtered =
+      data.where((e) => e['status'] == 'pending').toList();
+
+      setState(() {
+        requests = filtered;
+      });
+    });
+  }
+
+  /// ================= ACCEPT REQUEST =================
+  Future<void> acceptRequest(Map req) async {
+    await supabase
+        .from('link_requests')
+        .update({'status': 'accepted'})
+        .eq('id', req['id']);
+
+    await supabase.from('user_parent_link').insert({
+      'user_id': req['user_id'],
+      'parent_id': currentParentId,
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Request Accepted")),
+    );
+  }
+
+  /// ================= LOGOUT =================
   Future<void> _logout() async {
     await supabase.auth.signOut();
 
@@ -59,7 +97,7 @@ class _ParentDashboradScreenState
     );
   }
 
-  // ================= LOCATION =================
+  /// ================= LOCATION =================
   void listenToLocation() {
     supabase
         .from('live_location')
@@ -76,15 +114,17 @@ class _ParentDashboradScreenState
     });
   }
 
-  // ================= ALERT LISTENER =================
+  /// ================= ALERT LISTENER =================
   void listenToAlerts() {
     supabase
         .from('alerts')
         .stream(primaryKey: ['id'])
         .eq('parent_id', currentParentId!)
+        .order('created_at', ascending: false)
+        .limit(1)
         .listen((data) {
       if (data.isNotEmpty) {
-        final alert = data.last;
+        final alert = data.first;
 
         if (!alertShown) {
           alertShown = true;
@@ -94,17 +134,33 @@ class _ParentDashboradScreenState
     });
   }
 
-  // ================= ALERT POPUP =================
-  void showAlertPopup(Map alert) {
+  /// ================= ALERT POPUP =================
+  void showAlertPopup(Map alert) async {
     final lat = alert['latitude'];
     final lng = alert['longitude'];
+
+    String locationName = "Fetching location...";
+
+    try {
+      List<Placemark> placemarks =
+      await placemarkFromCoordinates(lat, lng);
+
+      if (placemarks.isNotEmpty) {
+        final p = placemarks.first;
+
+        locationName =
+        "${p.street ?? ""}, ${p.locality ?? ""}, ${p.administrativeArea ?? ""}";
+      }
+    } catch (e) {
+      locationName = "Location not found";
+    }
 
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text("🚨 EMERGENCY ALERT"),
         content: Text(
-          "${alert['message']}\n\nLocation:\n$lat , $lng",
+          "${alert['message']}\n\n📍 $locationName",
         ),
         actions: [
           TextButton(
@@ -127,7 +183,7 @@ class _ParentDashboradScreenState
     );
   }
 
-  // ================= MOVE CAMERA =================
+  /// ================= MOVE CAMERA =================
   void moveToAlertLocation(double lat, double lng) {
     final pos = LatLng(lat, lng);
 
@@ -136,12 +192,11 @@ class _ParentDashboradScreenState
     );
   }
 
-  // ================= UPDATE MAP =================
+  /// ================= UPDATE MAP =================
   void updateMap(double lat, double lng) {
     final newPosition = LatLng(lat, lng);
 
-    final double bearing =
-    _getBearing(childLocation, newPosition);
+    final double bearing = _getBearing(childLocation, newPosition);
 
     setState(() {
       childLocation = newPosition;
@@ -153,8 +208,7 @@ class _ParentDashboradScreenState
           position: newPosition,
           rotation: _bearing,
           anchor: const Offset(0.5, 0.5),
-          infoWindow:
-          const InfoWindow(title: "Live Location"),
+          infoWindow: const InfoWindow(title: "Live Location"),
         ),
       };
     });
@@ -171,7 +225,7 @@ class _ParentDashboradScreenState
     );
   }
 
-  // ================= BEARING =================
+  /// ================= BEARING =================
   double _getBearing(LatLng start, LatLng end) {
     final lat1 = start.latitude * (pi / 180);
     final lon1 = start.longitude * (pi / 180);
@@ -191,13 +245,55 @@ class _ParentDashboradScreenState
     return (brng * 180 / pi + 360) % 360;
   }
 
-  // ================= UI =================
+  /// ================= REQUEST CARD =================
+  Widget requestCard(Map req) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Expanded(
+            child: FutureBuilder(
+              future: supabase
+                  .from('profiles')
+                  .select('email')
+                  .eq('id', req['user_id'])
+                  .single(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) {
+                  return const Text("Loading...");
+                }
+
+                final data = snapshot.data as Map;
+                final email = data['email'] ?? '';
+
+                return Text(
+                  email,
+                  overflow: TextOverflow.ellipsis,
+                );
+              },
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => acceptRequest(req),
+            child: const Text("Accept"),
+          )
+        ],
+      ),
+    );
+  }
+
+  /// ================= UI =================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0D0D0D),
 
-      /// 🔥 APP BAR WITH LOGOUT
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -215,7 +311,20 @@ class _ParentDashboradScreenState
           padding: const EdgeInsets.all(20),
           child: ListView(
             children: [
-              const SizedBox(height: 20),
+              const SizedBox(height: 10),
+
+              /// 🔥 REQUEST SECTION
+              const Text("Pending Requests",
+                  style: TextStyle(fontSize: 18)),
+
+              const SizedBox(height: 10),
+
+              if (requests.isEmpty)
+                const Text("No pending requests")
+              else
+                ...requests.map((r) => requestCard(r)).toList(),
+
+              const SizedBox(height: 30),
 
               /// STATUS CARD
               Container(
@@ -237,18 +346,13 @@ class _ParentDashboradScreenState
                 ),
               ),
 
-              const SizedBox(height: 30),
+              const SizedBox(height: 20),
 
-              const Text(
-                "Live Location",
-                style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold),
-              ),
+              const Text("Live Location",
+                  style: TextStyle(fontSize: 18)),
 
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
 
-              /// MAP
               Container(
                 height: 220,
                 decoration: BoxDecoration(
@@ -262,65 +366,15 @@ class _ParentDashboradScreenState
                       zoom: 14,
                     ),
                     markers: _markers,
-                    zoomControlsEnabled: false,
-                    myLocationButtonEnabled: false,
-                    compassEnabled: true,
-                    tiltGesturesEnabled: true,
                     onMapCreated: (controller) {
                       _mapController = controller;
                     },
                   ),
                 ),
               ),
-
-              const SizedBox(height: 24),
-
-              Row(
-                children: [
-                  Expanded(
-                    child: _infoCard(
-                        Icons.directions_walk,
-                        "STATUS",
-                        "Tracking"),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: _infoCard(
-                        Icons.warning,
-                        "ALERT",
-                        "Active"),
-                  ),
-                ],
-              ),
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _infoCard(
-      IconData icon, String title, String value) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Column(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: Colors.orange),
-          const SizedBox(height: 12),
-          Text(title,
-              style: const TextStyle(color: Colors.grey)),
-          const SizedBox(height: 4),
-          Text(value,
-              style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold)),
-        ],
       ),
     );
   }

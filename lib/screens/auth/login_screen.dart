@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../services/notification_service.dart';
 
 import '../../navigation/bottom_nav.dart';
 import '../parent/parent_dashborad_screen.dart';
@@ -28,6 +29,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (response.user != null) {
         final userId = response.user!.id;
+        final token = await NotificationService.getToken();
+        await supabase.from('profiles').update({
+          'fcm_token': token
+        }).eq('id', userId);
 
         /// 🔥 FETCH ROLE FROM DATABASE
         final data = await supabase
