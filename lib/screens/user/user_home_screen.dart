@@ -379,6 +379,30 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
         'latitude': _currentPosition?.latitude,
         'longitude': _currentPosition?.longitude,
       });
+      /// 🔥 GET PARENT TOKEN
+      final parentData = await supabase
+          .from('profiles')
+          .select('fcm_token')
+          .eq('id', parent['parent_id'])
+          .single();
+
+      final parentToken = parentData['fcm_token'];
+
+      /// 🔥 SEND PUSH NOTIFICATION
+      await http.post(
+        Uri.parse("https://fcm.googleapis.com/fcm/send"),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "key=YOUR_SERVER_KEY"
+        },
+        body: jsonEncode({
+          "to": parentToken,
+          "notification": {
+            "title": "🚨 Alert",
+            "body": "User is $status"
+          }
+        }),
+      );
     }
   }
   Future<void> sendSOSAlert() async {
@@ -396,7 +420,31 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
         'message': '🚨 SOS EMERGENCY!',
         'latitude': _currentPosition!.latitude,
         'longitude': _currentPosition!.longitude,
+
       });
+      final parentData = await supabase
+          .from('profiles')
+          .select('fcm_token')
+          .eq('id', parent['parent_id'])
+          .single();
+
+      final parentToken = parentData['fcm_token'];
+
+      await http.post(
+        Uri.parse("https://fcm.googleapis.com/fcm/send"),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "AIzaSyDHjEFvyTtg1ZcxWeY12vxJwQ17tMdkFTg"
+        },
+        body: jsonEncode({
+          "to": parentToken,
+          "notification": {
+            "title": "🚨 SOS ALERT",
+            "body": "User triggered emergency!"
+          }
+        }),
+      );
+
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
