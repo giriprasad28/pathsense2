@@ -440,7 +440,7 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
           "to": parentToken,
           "notification": {
             "title": "🚨 SOS ALERT",
-            "body": "User triggered emergency!"
+            "body": "User triggered emergency!!"
           }
         }),
       );
